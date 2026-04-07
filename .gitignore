@@ -1,0 +1,5 @@
+.env
+checker.log
+checker.log.*
+__pycache__/
+*.pyc
