@@ -1,11 +1,13 @@
 """Bash Safety Checker — classifies shell commands as read-only or destructive via LLM."""
 
+import argparse
 import json
 import logging
 import logging.handlers
 import os
 import re
 import sys
+import time
 
 import requests
 from dotenv import load_dotenv
@@ -135,7 +137,7 @@ EXAMPLES
 "cat file.txt > output.txt" -> 1
 "echo hello | tee /tmp/log.txt" -> 1
 
-Respond with a JSON object: {"violation": 0 or 1, "description": "brief description of what the command does", "reason": "short side effect category if violation=1"}
+Respond with a JSON object: {"violation": 0 or 1, "description": "brief description of what the command does", "reason": "short side effect category if violation=1, empty string if violation=0"}
 """ + _STYLE_GUIDE
 
 
@@ -229,14 +231,18 @@ def classify_command(command: str) -> dict:
     resp.raise_for_status()
 
     data = resp.json()
-    content = data["choices"][0]["message"]["content"].strip()
+    msg = data["choices"][0]["message"]
+    content = msg["content"].strip()
+    reasoning = msg.get("reasoning_content") or msg.get("reasoning") or ""
     log.debug("raw LLM response: %s", content)
+    if reasoning:
+        log.debug("reasoning: %s", reasoning[:500])
 
     # Try to extract JSON from response (LLM may wrap it in markdown or add text)
     result = _parse_json(content)
     result = _normalize_result(result)
     log.info("result: %s", json.dumps(result, ensure_ascii=False))
-    return result
+    return result, reasoning
 
 
 def _normalize_result(result: dict) -> dict:
@@ -286,27 +292,75 @@ def _parse_json(text: str) -> dict:
     raise ValueError(f"Cannot parse JSON from LLM response: {text[:200]}")
 
 
+def _format_pretty(result: dict, elapsed: float, nerd_font: bool = False) -> str:
+    """Format result as colored human-readable string with timing."""
+    read_only = result.get("readOnly", False)
+    desc = result.get("description", "Unknown command")
+    reason = result.get("reason", "")
+
+    if nerd_font:
+        icon = "\uf058" if read_only else "\uf06a"
+        arrow = "\uf061"
+        time_prefix = "\uf017"
+    else:
+        icon = "\u2705" if read_only else "\u2757"
+        arrow = "->"
+        time_prefix = "in"
+
+    color = "\033[32m" if read_only else "\033[31m"
+    dim = "\033[2m"
+    reset = "\033[0m"
+
+    text = f"{icon} {desc}"
+    if not read_only and reason:
+        text += f" {arrow} {reason}"
+    timing = f"{dim}{time_prefix} {elapsed:.3f} secs{reset}"
+    return f"{color}{text}{reset}\n{timing}"
+
+
+def _format_reasoning(reasoning: str, nerd_font: bool = False) -> str:
+    """Format reasoning as dim text, optionally with thought-bubble icon."""
+    dim = "\033[2m"
+    reset = "\033[0m"
+    icon = "\U000f02fc " if nerd_font else ""
+    lines = [l for l in reasoning.strip().splitlines() if l.strip()]
+    formatted = "\n".join(f"{dim}{icon}{line}{reset}" for line in lines)
+    return formatted
+
+
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: checker.py <command>", file=sys.stderr)
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Shell command safety classifier")
+    parser.add_argument("command", help="Shell command to classify")
+    parser.add_argument("-f", "--format", choices=["json", "pretty", "pretty-nf"],
+                        default="json", dest="fmt")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="Show model reasoning (if available)")
+    args = parser.parse_args()
 
-    command = sys.argv[1]
-
+    t0 = time.monotonic()
     try:
-        result = classify_command(command)
+        result, reasoning = classify_command(args.command)
     except Exception as e:
-        log.error("command: %s | error: %s", command, e)
+        log.error("command: %s | error: %s", args.command, e)
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
+    elapsed = time.monotonic() - t0
 
     # Validate expected structure
     if "readOnly" not in result or "description" not in result:
-        log.error("command: %s | bad structure: %s", command, result)
+        log.error("command: %s | bad structure: %s", args.command, result)
         print("Error: LLM returned unexpected structure", file=sys.stderr)
         sys.exit(1)
 
-    print(json.dumps(result))
+    if args.fmt == "json":
+        output = dict(result)
+        if args.verbose and reasoning:
+            output["reasoning"] = reasoning
+        print(json.dumps(output, ensure_ascii=False))
+    else:
+        if args.verbose and reasoning:
+            print(_format_reasoning(reasoning, nerd_font=(args.fmt == "pretty-nf")))
+        print(_format_pretty(result, elapsed, nerd_font=(args.fmt == "pretty-nf")))
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ command=$(python "$SCRIPT_DIR/checker_extract.py" "$input" 2>/dev/null) || exit 
 [ -z "$command" ] && exit 0
 
 # Call checker.py — on failure, gracefully pass through
-result=$(python "$SCRIPT_DIR/checker.py" "$command" 2>/dev/null) || exit 0
+result=$(python "$SCRIPT_DIR/checker.py" --format=json "$command" 2>/dev/null) || exit 0
 
 # Parse result and format for Claude Code (loads .env via dotenv for BSC_AUTO_ALLOW_READONLY)
 python -c "
