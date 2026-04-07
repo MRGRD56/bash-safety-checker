@@ -26,6 +26,7 @@ SHORTEN_INPUT = os.getenv("BSC_SHORTEN_INPUT", "false").lower() == "true"
 LANGUAGE = os.getenv("BSC_LANGUAGE", "")
 LOG_MAX_BYTES = int(os.getenv("BSC_LOG_MAX_KB", "512")) * 1024
 LOG_BACKUPS = int(os.getenv("BSC_LOG_BACKUPS", "2"))
+MODEL_PROFILE = os.getenv("BSC_MODEL_PROFILE", "general")
 
 # Rotating log: checker.log -> checker.log.1 -> checker.log.2 -> deleted
 log = logging.getLogger("bsc")
@@ -38,6 +39,28 @@ _handler = logging.handlers.RotatingFileHandler(
 )
 _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
 log.addHandler(_handler)
+
+_STYLE_GUIDE = """
+The description should be human-readable, concise (one sentence), and describe the ACTION (e.g., "List files in current directory").
+The reason must be a SHORT capitalized category of the side effect — do NOT repeat or rephrase the description.
+
+Examples of correct description + reason pairs (English):
+- "Creates directory, downloads JAR files and changes ownership on remote server" / "Modifies remote filesystem"
+- "Deletes all .tmp files in /var/cache recursively" / "Permanent file deletion"
+- "Sends POST request to create a user via API" / "Mutates remote API state"
+- "Restarts nginx service on production server" / "Service interruption"
+- "Runs database migration script" / "Alters database schema"
+- "Installs npm packages from package.json" / "Modifies node_modules and lockfile"
+- "Force-pushes current branch to origin" / "Overwrites remote git history"
+- "Runs unknown Python script log_data.py" / "Unknown script behavior"
+
+Examples of correct description + reason pairs (русский):
+- "Создаёт директорию и скачивает JAR-файлы на удалённом сервере" / "Изменение удалённой файловой системы"
+- "Перезапускает сервис nginx на продакшен-сервере" / "Прерывание работы сервиса"
+- "Выполняет миграцию базы данных" / "Изменение схемы БД"
+- "Записывает вывод команды в файл /tmp/output.log" / "Запись в файл"
+- "Запускает неизвестный bash-скрипт deploy.sh" / "Неизвестное поведение скрипта"
+"""
 
 SYSTEM_PROMPT = """\
 You are a shell command safety classifier. You receive a shell command and must determine whether it is READ-ONLY or POTENTIALLY DESTRUCTIVE.
@@ -78,23 +101,42 @@ IMPORTANT RULES:
 Respond with ONLY a JSON object, no markdown fencing, no extra text:
 - If read-only: {"readOnly": true, "description": "Brief description of what this command does"}
 - If destructive: {"readOnly": false, "description": "Brief description of what this command does", "reason": "What destructive side effect occurs"}
-
-The description should be human-readable, concise (one sentence), and describe the ACTION (e.g., "List files in current directory", "Search for pattern in PHP files inside Docker container").
-The reason must be a SHORT category of the side effect — do NOT repeat or rephrase the description.
-
-Examples of correct description + reason pairs:
-- description: "Creates directory, downloads JAR files and changes ownership on remote server" / reason: "Modifies remote filesystem"
-- description: "Deletes all .tmp files in /var/cache recursively" / reason: "Permanent file deletion"
-- description: "Sends POST request to create a user via API" / reason: "Mutates remote API state"
-- description: "Restarts nginx service on production server" / reason: "Service interruption"
-- description: "Runs database migration script" / reason: "Alters database schema"
-- description: "Installs npm packages from package.json" / reason: "Modifies node_modules and lockfile"
-- description: "Force-pushes current branch to origin" / reason: "Overwrites remote git history"
-- description: "Runs unknown Python script log_data.py" / reason: "Unknown script behavior"."""
+""" + _STYLE_GUIDE
 
 LANGUAGE_SUFFIX = """
 
 IMPORTANT: Write ALL text values ("description" and "reason") in {language}. JSON keys must remain in English."""
+
+SAFEGUARD_SYSTEM_PROMPT = """\
+INSTRUCTIONS
+Classify the given shell command as SAFE (read-only) or VIOLATING (destructive/state-mutating). A command is SAFE only if every part of it exclusively reads or displays information with zero side effects.
+
+DEFINITIONS
+SAFE (read-only): Command exclusively retrieves or displays information. Includes: ls, cat, grep, find, git status/log/diff, docker ps/logs, ps, free, whoami, curl/wget GET (no -d/--data/-X POST), ping, dig, echo/printf to stdout, SELECT queries, version checks.
+
+VIOLATING (destructive): Command creates, modifies, deletes, or affects any state. Includes: file writes (touch, mkdir, rm, mv, cp, tee, >, >>), file edits (sed -i, chmod, chown), git writes (add, commit, push, checkout, reset, merge, rebase), package installs (pip, npm, apt), docker writes (run, stop, rm, build), service control (systemctl start/stop/restart), network mutations (curl -X POST/PUT/DELETE, curl -d), database writes (INSERT, UPDATE, DELETE, DROP, CREATE), process control (kill, pkill), system changes (reboot, shutdown).
+
+VIOLATES (1) / SAFE (0)
+1 — Any part of a piped or chained command is destructive
+1 — Shell redirections to files (>, >>)
+1 — Running unknown scripts or binaries (python script.py, ./run.sh)
+1 — Subshells, eval, exec unless entire content is verifiably read-only
+1 — Uncertain about the command's behavior
+0 — All parts of the command are verifiably read-only
+
+EXAMPLES
+"ls -la /var/www" -> 0
+"grep -r 'TODO' src/" -> 0
+"git status && git diff HEAD" -> 0
+"rm -rf /tmp/cache" -> 1
+"git add . && git commit -m 'fix'" -> 1
+"curl -X POST https://api.example.com/users -d '{}'" -> 1
+"python ./deploy.py" -> 1
+"cat file.txt > output.txt" -> 1
+"echo hello | tee /tmp/log.txt" -> 1
+
+Respond with a JSON object: {"violation": 0 or 1, "description": "brief description of what the command does", "reason": "short side effect category if violation=1"}
+""" + _STYLE_GUIDE
 
 
 def _shorten(command: str) -> str:
@@ -126,7 +168,10 @@ def classify_command(command: str) -> dict:
     else:
         command_short = command
 
-    prompt = SYSTEM_PROMPT
+    if MODEL_PROFILE == "safeguard":
+        prompt = SAFEGUARD_SYSTEM_PROMPT
+    else:
+        prompt = SYSTEM_PROMPT
     if LANGUAGE:
         prompt += LANGUAGE_SUFFIX.format(language=LANGUAGE)
 
@@ -137,8 +182,28 @@ def classify_command(command: str) -> dict:
             {"role": "user", "content": command_short},
         ],
         "temperature": 0.0,
-        "max_tokens": MAX_TOKENS,
-        "response_format": {
+    }
+
+    if MODEL_PROFILE == "safeguard":
+        body["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "safety_check",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "violation": {"type": "integer"},
+                        "description": {"type": "string"},
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["violation", "description"],
+                },
+            },
+        }
+    else:
+        body["max_tokens"] = MAX_TOKENS
+        body["response_format"] = {
             "type": "json_schema",
             "json_schema": {
                 "name": "safety_check",
@@ -153,9 +218,9 @@ def classify_command(command: str) -> dict:
                     "required": ["readOnly", "description"],
                 },
             },
-        },
-        **EXTRA_BODY,
-    }
+        }
+
+    body.update(EXTRA_BODY)
 
     url = f"{API_URL}/chat/completions"
     log.debug("request body: %s", json.dumps(body, ensure_ascii=False)[:2000])
@@ -169,8 +234,26 @@ def classify_command(command: str) -> dict:
 
     # Try to extract JSON from response (LLM may wrap it in markdown or add text)
     result = _parse_json(content)
+    result = _normalize_result(result)
     log.info("result: %s", json.dumps(result, ensure_ascii=False))
     return result
+
+
+def _normalize_result(result: dict) -> dict:
+    """Map safeguard-20b output to the standard {readOnly, description, reason} contract."""
+    if MODEL_PROFILE != "safeguard":
+        return result
+    violation = result.get("violation")
+    if violation is None:
+        violation = result.get("label", 0)
+    read_only = int(violation) == 0
+    normalized = {
+        "readOnly": read_only,
+        "description": result.get("description", ""),
+    }
+    if not read_only:
+        normalized["reason"] = result.get("reason", "")
+    return normalized
 
 
 def _parse_json(text: str) -> dict:

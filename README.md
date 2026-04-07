@@ -87,7 +87,25 @@ All settings are in `.env`. See [`.env.example`](.env.example) for all options.
 | `BSC_NERD_FONT_SUPPORT` | No | `false` | Use Nerd Font icons |
 | `BSC_LOG_MAX_KB` | No | `512` | Max log file size in KB |
 | `BSC_LOG_BACKUPS` | No | `2` | Number of rotated log files to keep |
+| `BSC_MODEL_PROFILE` | No | `general` | Model profile: `general` or `safeguard` |
 | `BSC_AUTO_ALLOW_READONLY` | No | `false` | Auto-approve read-only commands (skip approval dialog) |
+
+### Safeguard model profile
+
+If you use [gpt-oss-safeguard-20b](https://github.com/openai/openai-cookbook/blob/main/articles/gpt-oss-safeguard-guide.md), set `BSC_MODEL_PROFILE=safeguard`. This activates a structured policy prompt optimized for the safeguard model's classification format.
+
+Example `.env` for safeguard:
+
+```env
+BSC_MODEL=GPT-OSS-SAFEGUARD-20B:MXFP4
+BSC_MODEL_PROFILE=safeguard
+BSC_EXTRA_BODY={}
+```
+
+Differences from the default `general` profile:
+- Uses structured policy prompt (INSTRUCTIONS / DEFINITIONS / VIOLATES/SAFE / EXAMPLES)
+- `BSC_MAX_TOKENS` is not sent (safeguard models must not cap output tokens)
+- Output uses `violation: 0|1` internally, normalized to `readOnly` for hook compatibility
 
 ## Standalone usage
 

@@ -46,6 +46,10 @@ All settings are in `.env` (see `.env.example` for all options).
 
 `BSC_API_URL` and `BSC_MODEL` are required. Everything else has sensible defaults.
 
+`BSC_MODEL_PROFILE` controls the prompt format and output parsing:
+- `general` (default) — general-purpose instruction-following prompt, outputs `{readOnly, description, reason}`
+- `safeguard` — structured policy prompt for gpt-oss-safeguard-20b, outputs `{violation, description, reason}`, normalized to `readOnly` by `_normalize_result()`
+
 ## Error Handling
 
 If the LLM is unavailable, times out, or returns unparseable output:
