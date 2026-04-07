@@ -67,7 +67,7 @@ Add this to your `~/.claude/settings.json` (global) or `.claude/settings.json` (
 }
 ```
 
-Replace `/path/to/bash-safety-checker` with the actual path. On Windows with Git Bash use forward slashes (e.g., `/c/apps/bash-safety-checker/hook.sh`).
+Replace `/path/to/bash-safety-checker` with the actual path. On Windows with Git Bash use forward slashes (e.g., `/c/tools/bash-safety-checker/hook.sh`).
 
 Restart Claude Code to pick up the hook.
 
