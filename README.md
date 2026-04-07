@@ -88,6 +88,8 @@ All settings are in `.env`. See [`.env.example`](.env.example) for all options.
 | `BSC_LOG_MAX_KB` | No | `512` | Max log file size in KB |
 | `BSC_LOG_BACKUPS` | No | `2` | Number of rotated log files to keep |
 | `BSC_MODEL_PROFILE` | No | `general` | Model profile: `general` or `safeguard` |
+| `BSC_RESPONSE_FORMAT` | No | `true` | Send `response_format` JSON schema. Disable if unsupported by model/backend |
+| `BSC_SYSTEM_AS_USER` | No | `false` | Merge system prompt into a single `user` message. Enable if model lacks `system` role |
 | `BSC_AUTO_ALLOW_READONLY` | No | `false` | Auto-approve read-only commands (skip approval dialog) |
 
 ### Safeguard model profile

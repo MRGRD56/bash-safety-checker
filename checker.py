@@ -29,6 +29,8 @@ LANGUAGE = os.getenv("BSC_LANGUAGE", "")
 LOG_MAX_BYTES = int(os.getenv("BSC_LOG_MAX_KB", "512")) * 1024
 LOG_BACKUPS = int(os.getenv("BSC_LOG_BACKUPS", "2"))
 MODEL_PROFILE = os.getenv("BSC_MODEL_PROFILE", "general")
+RESPONSE_FORMAT = os.getenv("BSC_RESPONSE_FORMAT", "true").lower() == "true"
+SYSTEM_AS_USER = os.getenv("BSC_SYSTEM_AS_USER", "false").lower() == "true"
 
 # Rotating log: checker.log -> checker.log.1 -> checker.log.2 -> deleted
 log = logging.getLogger("bsc")
@@ -177,50 +179,59 @@ def classify_command(command: str) -> dict:
     if LANGUAGE:
         prompt += LANGUAGE_SUFFIX.format(language=LANGUAGE)
 
-    body = {
-        "model": MODEL,
-        "messages": [
+    if SYSTEM_AS_USER:
+        messages = [
+            {"role": "user", "content": f"{prompt}\n\n{command_short}"},
+        ]
+    else:
+        messages = [
             {"role": "system", "content": prompt},
             {"role": "user", "content": command_short},
-        ],
+        ]
+
+    body = {
+        "model": MODEL,
+        "messages": messages,
         "temperature": 0.0,
     }
 
     if MODEL_PROFILE == "safeguard":
-        body["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "safety_check",
-                "strict": True,
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "violation": {"type": "integer"},
-                        "description": {"type": "string"},
-                        "reason": {"type": "string"},
+        if RESPONSE_FORMAT:
+            body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "safety_check",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "violation": {"type": "integer"},
+                            "description": {"type": "string"},
+                            "reason": {"type": "string"},
+                        },
+                        "required": ["violation", "description"],
                     },
-                    "required": ["violation", "description"],
                 },
-            },
-        }
+            }
     else:
         body["max_tokens"] = MAX_TOKENS
-        body["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "safety_check",
-                "strict": True,
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "readOnly": {"type": "boolean"},
-                        "description": {"type": "string"},
-                        "reason": {"type": "string"},
+        if RESPONSE_FORMAT:
+            body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "safety_check",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "readOnly": {"type": "boolean"},
+                            "description": {"type": "string"},
+                            "reason": {"type": "string"},
+                        },
+                        "required": ["readOnly", "description"],
                     },
-                    "required": ["readOnly", "description"],
                 },
-            },
-        }
+            }
 
     body.update(EXTRA_BODY)
 
