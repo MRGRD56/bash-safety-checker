@@ -163,8 +163,13 @@ def _shorten(command: str) -> str:
     return command
 
 
-def classify_command(command: str) -> dict:
-    log.info("command: %s", command)
+SHELL_SUFFIX = """
+
+NOTE: This command is intended for the {shell} shell. Evaluate it using {shell} semantics."""
+
+
+def classify_command(command: str, shell: str = "") -> dict:
+    log.info("command: %s | shell: %s", command, shell or "unknown")
     if SHORTEN_INPUT:
         command_short = _shorten(command)
         if command_short != command:
@@ -176,6 +181,8 @@ def classify_command(command: str) -> dict:
         prompt = SAFEGUARD_SYSTEM_PROMPT
     else:
         prompt = SYSTEM_PROMPT
+    if shell:
+        prompt += SHELL_SUFFIX.format(shell=shell)
     if LANGUAGE:
         prompt += LANGUAGE_SUFFIX.format(language=LANGUAGE)
 
@@ -342,6 +349,8 @@ def _format_reasoning(reasoning: str, nerd_font: bool = False) -> str:
 def main():
     parser = argparse.ArgumentParser(description="Shell command safety classifier")
     parser.add_argument("command", help="Shell command to classify")
+    parser.add_argument("-s", "--shell", default="",
+                        help="Shell type (e.g. Bash, PowerShell)")
     parser.add_argument("-f", "--format", choices=["json", "pretty", "pretty-nf"],
                         default="json", dest="fmt")
     parser.add_argument("-v", "--verbose", action="store_true",
@@ -350,7 +359,7 @@ def main():
 
     t0 = time.monotonic()
     try:
-        result, reasoning = classify_command(args.command)
+        result, reasoning = classify_command(args.command, shell=args.shell)
     except Exception as e:
         log.error("command: %s | error: %s", args.command, e)
         print(f"Error: {e}", file=sys.stderr)

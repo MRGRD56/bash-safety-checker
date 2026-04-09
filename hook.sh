@@ -10,14 +10,21 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Read all of stdin (Claude Code sends JSON)
 input=$(cat)
 
-# Extract the command from tool_input.command using Python (no jq dependency)
-command=$(python "$SCRIPT_DIR/checker_extract.py" "$input" 2>/dev/null) || exit 0
+# Extract command and tool name from tool_input using Python (no jq dependency)
+extract_output=$(python "$SCRIPT_DIR/checker_extract.py" "$input" 2>/dev/null) || exit 0
+command=$(echo "$extract_output" | head -n1)
+tool_name=$(echo "$extract_output" | tail -n1)
 
 # Skip empty commands
 [ -z "$command" ] && exit 0
 
+# Build checker.py args — pass --shell if tool_name is available
+checker_args=(--format=json)
+[ -n "$tool_name" ] && checker_args+=(--shell "$tool_name")
+checker_args+=("$command")
+
 # Call checker.py — on failure, gracefully pass through
-result=$(python "$SCRIPT_DIR/checker.py" --format=json "$command" 2>/dev/null) || exit 0
+result=$(python "$SCRIPT_DIR/checker.py" "${checker_args[@]}" 2>/dev/null) || exit 0
 
 # Parse result and format for Claude Code (loads .env via dotenv for BSC_AUTO_ALLOW_READONLY)
 python -c "
